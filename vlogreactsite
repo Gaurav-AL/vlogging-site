@@ -1,0 +1,490 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Plus, Edit, Trash2, Search, Moon, Sun, Save, Eye, Hash, Upload, MoreHorizontal, Download, Share2 } from "lucide-react";
+
+// -----------------------------
+// Minimal Markdown -> HTML (very small subset)
+// -----------------------------
+function md(html) {
+  let out = html
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  // headings
+  out = out.replace(/^######\s?(.*)$/gm, "<h6>$1</h6>")
+           .replace(/^#####\s?(.*)$/gm, "<h5>$1</h5>")
+           .replace(/^####\s?(.*)$/gm, "<h4>$1</h4>")
+           .replace(/^###\s?(.*)$/gm, "<h3>$1</h3>")
+           .replace(/^##\s?(.*)$/gm, "<h2>$1</h2>")
+           .replace(/^#\s?(.*)$/gm, "<h1>$1</h1>");
+  // bold/italic/code
+  out = out.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+           .replace(/\*(.*?)\*/g, "<em>$1</em>")
+           .replace(/`([^`]+)`/g, "<code>$1</code>");
+  // links [text](url)
+  out = out.replace(/\[(.*?)\]\((https?:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // paragraphs & line breaks
+  out = out.replace(/\n\n+/g, "</p><p>").replace(/^(.+?)$/gms, "<p>$1</p>");
+  return out;
+}
+
+// -----------------------------
+// Helpers
+// -----------------------------
+const LS_KEY = "vlog_posts_v1";
+const THEME_KEY = "vlog_theme";
+
+function useLocalStorage(key, initial) {
+  const [val, setVal] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : initial;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+  }, [key, val]);
+  return [val, setVal];
+}
+
+function slugify(str) {
+  return (str || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+function formatDate(d) {
+  return new Date(d).toLocaleString();
+}
+
+// -----------------------------
+// Main App
+// -----------------------------
+export default function VlogSite() {
+  const [theme, setTheme] = useLocalStorage(THEME_KEY, "light");
+  useEffect(() => {
+    if (theme === "dark") document.documentElement.classList.add("dark");
+    else document.documentElement.classList.remove("dark");
+  }, [theme]);
+
+  const [posts, setPosts] = useLocalStorage(LS_KEY, [
+    {
+      id: crypto.randomUUID(),
+      title: "Hello, Internet! My first vlog ✨",
+      content:
+        "# Day 1\n\nWelcome to my new vlog space.\n\n**Plan**: I'll write short daily vlogs about building businesses, travel notes, and tech hacks.\n\n*Follow along* and leave me ideas!",
+      tags: ["intro", "day1"],
+      createdAt: Date.now(),
+      cover: "",
+    },
+  ]);
+
+  const [query, setQuery] = useState("");
+  const [activeTag, setActiveTag] = useState("");
+  const [view, setView] = useState("list"); // list | post | editor
+  const [selected, setSelected] = useState(null);
+
+  const tags = useMemo(() => {
+    const t = new Set();
+    posts.forEach((p) => p.tags?.forEach((x) => t.add(x)));
+    return Array.from(t).sort();
+  }, [posts]);
+
+  const filtered = useMemo(() => {
+    return posts
+      .filter((p) =>
+        (activeTag ? p.tags?.includes(activeTag) : true) &&
+        (query
+          ? (p.title + " " + p.content + " " + (p.tags || []).join(" "))
+              .toLowerCase()
+              .includes(query.toLowerCase())
+          : true)
+      )
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [posts, query, activeTag]);
+
+  function newPostTemplate() {
+    return {
+      id: crypto.randomUUID(),
+      title: "Untitled Vlog",
+      content: "# New vlog\n\nWrite your story…",
+      tags: [],
+      createdAt: Date.now(),
+      cover: "",
+    };
+  }
+
+  function savePost(post) {
+    setPosts((prev) => {
+      const idx = prev.findIndex((p) => p.id === post.id);
+      if (idx === -1) return [post, ...prev];
+      const copy = [...prev];
+      copy[idx] = post;
+      return copy;
+    });
+    setSelected(post);
+    setView("post");
+  }
+
+  function deletePost(id) {
+    setPosts((prev) => prev.filter((p) => p.id !== id));
+    setView("list");
+    setSelected(null);
+  }
+
+  function exportJSON() {
+    const blob = new Blob([JSON.stringify(posts, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vlog-export-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <TooltipProvider>
+      <div className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+        {/* Header */}
+        <header className="sticky top-0 z-30 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:supports-[backdrop-filter]:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800">
+          <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-2">
+            <div className="flex-1 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
+              <div>
+                <h1 className="text-xl font-bold leading-tight">Gaurav's Vlog</h1>
+                <p className="text-xs text-slate-500">Write. Publish. Repeat.</p>
+              </div>
+            </div>
+
+            <div className="hidden md:flex items-center gap-2 mr-2">
+              <div className="relative">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 opacity-70" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search posts…"
+                  className="pl-8 w-60"
+                />
+              </div>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="rounded-xl">Tags</Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuLabel>Filter by tag</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={activeTag === ""}
+                    onCheckedChange={() => setActiveTag("")}
+                  >
+                    All
+                  </DropdownMenuCheckboxItem>
+                  {tags.map((t) => (
+                    <DropdownMenuCheckboxItem
+                      key={t}
+                      checked={activeTag === t}
+                      onCheckedChange={() => setActiveTag(t)}
+                    >
+                      #{t}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="rounded-2xl" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                    {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{theme === "dark" ? "Light" : "Dark"} mode</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" className="rounded-xl" onClick={() => { setSelected(newPostTemplate()); setView("editor"); }}>
+                    <Plus className="h-4 w-4 mr-1" /> New Vlog
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Create a new post</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" className="rounded-xl" onClick={exportJSON}>
+                    <Download className="h-4 w-4 mr-1" /> Export
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Download all posts (JSON)</TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
+        </header>
+
+        {/* Main */}
+        <main className="max-w-5xl mx-auto px-4 py-6 grid grid-cols-1 md:grid-cols-12 gap-6">
+          {/* Sidebar */}
+          <aside className="md:col-span-3 space-y-4">
+            <Card className="rounded-2xl">
+              <CardHeader>
+                <CardTitle>Your Stats</CardTitle>
+                <CardDescription>Quick overview</CardDescription>
+              </CardHeader>
+              <CardContent className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <div className="text-2xl font-bold">{posts.length}</div>
+                  <div className="text-xs text-slate-500">Posts</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{tags.length}</div>
+                  <div className="text-xs text-slate-500">Tags</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold">{Math.max(...posts.map(p=>p.createdAt)) ? new Date(Math.max(...posts.map(p=>p.createdAt))).toLocaleDateString() : "-"}</div>
+                  <div className="text-xs text-slate-500">Last post</div>
+                </div>
+              </CardContent>
+              <CardFooter className="text-xs text-slate-500">Autosaves to your browser</CardFooter>
+            </Card>
+
+            <Card className="rounded-2xl">
+              <CardHeader>
+                <CardTitle>Tags</CardTitle>
+                <CardDescription>Click to filter</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2">
+                <Badge
+                  variant={activeTag === "" ? "default" : "outline"}
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => setActiveTag("")}
+                >
+                  all
+                </Badge>
+                {tags.map((t) => (
+                  <Badge
+                    key={t}
+                    variant={activeTag === t ? "default" : "outline"}
+                    className="cursor-pointer rounded-xl"
+                    onClick={() => setActiveTag(t)}
+                  >
+                    <Hash className="h-3 w-3 mr-1" /> {t}
+                  </Badge>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-2xl">
+              <CardHeader>
+                <CardTitle>About</CardTitle>
+                <CardDescription>Your space on the internet</CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
+                Write short daily vlogs, publish ideas, and share journeys. Start small; post often. ✍️
+              </CardContent>
+            </Card>
+          </aside>
+
+          {/* Content */}
+          <section className="md:col-span-9">
+            {view === "list" && (
+              <AnimatePresence mode="popLayout">
+                <div className="grid gap-4">
+                  {filtered.map((p) => (
+                    <motion.div key={p.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
+                      <Card className="rounded-2xl hover:shadow-lg transition">
+                        <CardHeader className="flex flex-row items-start justify-between gap-2">
+                          <div>
+                            <CardTitle className="text-lg cursor-pointer hover:underline" onClick={() => { setSelected(p); setView("post"); }}>{p.title}</CardTitle>
+                            <CardDescription>{formatDate(p.createdAt)}</CardDescription>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button variant="outline" size="icon" className="rounded-xl" onClick={() => { setSelected(p); setView("editor"); }}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="destructive" size="icon" className="rounded-xl" onClick={() => deletePost(p.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="flex flex-wrap gap-2 mb-3">
+                            {p.tags?.map((t) => (
+                              <Badge key={t} variant="outline" className="rounded-xl">#{t}</Badge>
+                            ))}
+                          </div>
+                          <div className="prose prose-slate dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: md(p.content.slice(0, 400) + (p.content.length > 400 ? "\n\n…" : "")) }} />
+                        </CardContent>
+                        <CardFooter className="flex justify-end">
+                          <Button variant="ghost" className="rounded-xl" onClick={() => { setSelected(p); setView("post"); }}>
+                            <Eye className="h-4 w-4 mr-1" /> Read
+                          </Button>
+                        </CardFooter>
+                      </Card>
+                    </motion.div>
+                  ))}
+                  {filtered.length === 0 && (
+                    <Card className="rounded-2xl">
+                      <CardContent className="p-8 text-center text-slate-500">No posts yet. Click <strong>New Vlog</strong> to write your first post.</CardContent>
+                    </Card>
+                  )}
+                </div>
+              </AnimatePresence>
+            )}
+
+            {view === "post" && selected && (
+              <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+                <Card className="rounded-2xl">
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-2xl">{selected.title}</CardTitle>
+                      <CardDescription>{formatDate(selected.createdAt)}</CardDescription>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {selected.tags?.map((t) => (
+                          <Badge key={t} variant="outline" className="rounded-xl">#{t}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="rounded-xl" onClick={() => { setView("editor"); }}>
+                        <Edit className="h-4 w-4 mr-1" /> Edit
+                      </Button>
+                      <Button variant="secondary" className="rounded-xl" onClick={() => setView("list")}>Back</Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="prose prose-slate dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: md(selected.content) }} />
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {view === "editor" && selected && (
+              <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+                <Editor post={selected} onCancel={() => setView(selected?.title ? "post" : "list")} onSave={savePost} />
+              </motion.div>
+            )}
+          </section>
+        </main>
+
+        {/* Footer */}
+        <footer className="max-w-5xl mx-auto px-4 py-10 text-center text-xs text-slate-500">
+          Built with ❤️ — Your stories matter.
+        </footer>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// -----------------------------
+// Editor Component
+// -----------------------------
+function Editor({ post, onSave, onCancel }) {
+  const [title, setTitle] = useState(post.title || "");
+  const [content, setContent] = useState(post.content || "");
+  const [tagInput, setTagInput] = useState("");
+  const [tags, setTags] = useState(post.tags || []);
+
+  function addTag() {
+    const t = slugify(tagInput);
+    if (!t) return;
+    if (!tags.includes(t)) setTags([...tags, t]);
+    setTagInput("");
+  }
+
+  function removeTag(t) {
+    setTags(tags.filter((x) => x !== t));
+  }
+
+  function handleSave() {
+    onSave({ ...post, title: title || "Untitled Vlog", content, tags });
+  }
+
+  function downloadMarkdown() {
+    const blob = new Blob([`# ${title}\n\n${content}`], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${slugify(title) || "vlog"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <Card className="rounded-2xl">
+      <CardHeader className="flex flex-col gap-2">
+        <CardTitle className="text-xl">Editor</CardTitle>
+        <CardDescription>Write, tag, preview, publish.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Post title…"
+            className="text-lg"
+          />
+          <Button variant="outline" className="rounded-xl" onClick={downloadMarkdown}>
+            <Download className="h-4 w-4 mr-1" /> .md
+          </Button>
+        </div>
+
+        <Tabs defaultValue="write" className="w-full">
+          <TabsList className="rounded-xl">
+            <TabsTrigger value="write">Write</TabsTrigger>
+            <TabsTrigger value="preview">Preview</TabsTrigger>
+          </TabsList>
+          <TabsContent value="write" className="mt-3">
+            <Textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder={"Write your vlog in Markdown...\n\nExample:\n# My day building a side hustle\n- morning tea\n- launched v1\n- lessons learned"}
+              className="min-h-[320px]"
+            />
+          </TabsContent>
+          <TabsContent value="preview" className="mt-3">
+            <div className="prose prose-slate dark:prose-invert max-w-none border rounded-2xl p-4" dangerouslySetInnerHTML={{ __html: md(content || "Nothing to preview yet…") }} />
+          </TabsContent>
+        </Tabs>
+
+        <div>
+          <label className="text-xs uppercase tracking-wide text-slate-500">Tags</label>
+          <div className="flex items-center gap-2 mt-2">
+            <Input
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              placeholder="Add a tag (press Add)"
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
+            />
+            <Button variant="secondary" className="rounded-xl" onClick={addTag}><Hash className="h-4 w-4 mr-1" /> Add</Button>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {tags.map((t) => (
+              <Badge key={t} variant="outline" className="rounded-xl cursor-pointer" onClick={() => removeTag(t)}>#{t} ✕</Badge>
+            ))}
+            {tags.length === 0 && <span className="text-xs text-slate-500">No tags yet</span>}
+          </div>
+        </div>
+      </CardContent>
+      <CardFooter className="flex items-center justify-between">
+        <Button variant="ghost" className="rounded-xl" onClick={onCancel}>Back</Button>
+        <div className="flex gap-2">
+          <Button className="rounded-xl" onClick={handleSave}><Save className="h-4 w-4 mr-1" /> Save</Button>
+        </div>
+      </CardFooter>
+    </Card>
+  );
+}
